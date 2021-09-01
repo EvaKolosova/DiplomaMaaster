@@ -9,7 +9,41 @@
 #include "mkl_trans.h"
 #include "mkl_scalapack.h"
 #include "omp.h"
+#include "mt19937ar.h"
+#include "ziggurat.hpp"
 
+class RandomGeneratorMT19937ar {
+private:
+    bool ready;
+    double second = 0.0;
+    double mean, stddev;
+
+public:
+    explicit RandomGeneratorMT19937ar(double mean = 0.0, double stddev = 1.0, size_t seed = 0)
+        : mean(mean), stddev(stddev), ready(false) {
+        init_genrand(seed);
+    }
+
+    double Generate() {
+        if (ready) {
+            ready = false;
+            return second * stddev + mean;
+        }
+        else {
+            double u, v, s;
+            do {
+                u = 2.0 * genrand_real2() - 1.0;
+                v = 2.0 * genrand_real2() - 1.0;
+                s = u * u + v * v;
+            } while (s > 1.0 || s == 0.0);
+
+            double r = std::sqrt(-2.0 * std::log(s) / s);
+            second = r * u;
+            ready = true;
+            return r * v * stddev + mean;
+        }
+    }
+};
 
 class ComplexMatrix {
 private:
@@ -189,6 +223,7 @@ public:
             }
         }
 
+        result.normalZero();
         return result;
     }
 
@@ -203,6 +238,7 @@ public:
             }
         }
 
+        result.normalZero();
         return result;
     }
 
@@ -217,6 +253,7 @@ public:
             }
         }
 
+        result.normalZero();
         return result;
     }
 
@@ -226,11 +263,12 @@ public:
         //#pragma omp parallel for
         for (size_t i = 0; i < src.rows; ++i) {
             for (size_t j = 0; j < src.cols; ++j) {
-                result(i, j).real = src(i, j).real * value.real - src(i, j).imag * value.imag;;
-                result(i, j).imag = src(i, j).real * value.imag + src(i, j).imag * value.real;;
+                result(i, j).real = src(i, j).real * value.real - src(i, j).imag * value.imag;
+                result(i, j).imag = src(i, j).real * value.imag + src(i, j).imag * value.real;
             }
         }
 
+        result.normalZero();
         return result;
     }
 
@@ -240,11 +278,12 @@ public:
         //#pragma omp parallel for
         for (size_t i = 0; i < src.rows; ++i) {
             for (size_t j = 0; j < src.cols; ++j) {
-                result(i, j).real = src(i, j).real * value.real - src(i, j).imag * value.imag;;
-                result(i, j).imag = src(i, j).real * value.imag + src(i, j).imag * value.real;;
+                result(i, j).real = src(i, j).real * value.real - src(i, j).imag * value.imag;
+                result(i, j).imag = src(i, j).real * value.imag + src(i, j).imag * value.real;
             }
         }
 
+        result.normalZero();
         return result;
     }
 
@@ -257,15 +296,16 @@ public:
             for (size_t j = 0; j < lhs.cols; ++j) {
                 for (size_t k = 0; k < rhs.rows; ++k) {
                     for (size_t l = 0; l < rhs.cols; ++l) {
-                        result(i * rhs.rows + l, j * rhs.cols + k).real =
+                        result(i * rhs.rows + k, j * rhs.cols + l).real =
                             lhs(i, j).real * rhs(k, l).real - lhs(i, j).imag * rhs(k, l).imag;
-                        result(i * rhs.rows + l, j * rhs.cols + k).imag =
+                        result(i * rhs.rows + k, j * rhs.cols + l).imag =
                             lhs(i, j).real * rhs(k, l).imag + lhs(i, j).imag * rhs(k, l).real;
                     }
                 }
             }
         }
 
+        result.normalZero();
         return result;
     }
 
@@ -334,12 +374,24 @@ public:
             throw "Writing to file failed";
         }
     }
+
+    void normalZero() {
+        for (size_t i = 0; i < this->rows; ++i) {
+            for (size_t j = 0; j < this->cols; ++j) {
+                if (matrix[i * rows + j].imag == -0) {
+                    matrix[i * rows + j].imag = 0;
+                }
+                else if (matrix[i * rows + j].real == -0) {
+                    matrix[i * rows + j].real = 0;
+                }
+            }
+        }
+    }
 };
 
 constexpr size_t N = 4;
 constexpr size_t M = N * N - 1;
-constexpr size_t NUMBER_OF_IMPLEMENTATIONS = 1'000'000;
-constexpr size_t SEED = 1;
+constexpr size_t NUMBER_OF_IMPLEMENTATIONS = 100000; // 1'000'000;
 
 MKL_Complex16 mul(MKL_Complex16 complex, double value) {
     MKL_Complex16 result;
@@ -357,7 +409,6 @@ int main() {
     MKL_Complex16 zero; zero.real = 0, zero.imag = 0;
 
     std::vector<ComplexMatrix> F(N * N, ComplexMatrix(N, N, zero));
-    ComplexMatrix P(N * N, N * N, zero);
 
     ComplexMatrix eye(N, N, zero);
     for (size_t i = 0; i < N; ++i) {
@@ -390,24 +441,46 @@ int main() {
         }
     }
 
-    ComplexMatrix X(M, M, zero);
-    ComplexMatrix G(M, M, zero);
+    // ziggurat
+    //uint32_t kn[128];
+    //float fn[128], wn[128];
+    //r4_nor_setup(kn, fn, wn);
 
     for (size_t number = 0; number < NUMBER_OF_IMPLEMENTATIONS; ++number) {
-        size_t seed = NUMBER_OF_IMPLEMENTATIONS + 1 + number;
+        ComplexMatrix X(M, M, zero);
+        size_t seed = number;
+
+        // uint32_t seed = number;
+        /*RandomGeneratorMT19937ar gen_y(0, 1, seed);*/
+
+        //for (int i = 0; i < M; ++i) {
+        //    for (int j = 0; j < M; ++j) {
+        //        /*X(i, j).real = gen_y.Generate() / 2.0;*/
+        //        /*X(i, j).real = r4_nor(seed, kn, fn, wn) / 2.0;*/
+        //        X(i, j).real = 1;
+        //    }
+        //}
+        
         std::mt19937 gen_y;
         gen_y.seed(seed);
-        std::normal_distribution<double> distribution_y{ 0, 1 };
+        std::normal_distribution<double> distribution_y{ 0.0, 1.0 };
 
-        seed = NUMBER_OF_IMPLEMENTATIONS * 2 + 1 + number;
+        seed = NUMBER_OF_IMPLEMENTATIONS + number;
+
+        /*RandomGeneratorMT19937ar gen_z(0, 1, seed);*/
+
         std::mt19937 gen_z;
         gen_z.seed(seed);
-        std::normal_distribution<double> distribution_z{ 0, 1 };
+        std::normal_distribution<double> distribution_z{ 0.0, 1.0 };
 
         for (int i = 0; i < M; ++i) {
             for (int j = 0; j < M; ++j) {
                 X(i, j).real = distribution_y(gen_y) / 2.0;
                 X(i, j).imag = distribution_z(gen_z) / 2.0;
+
+                /*X(i, j).imag = gen_z.Generate() / 2.0;*/
+                /*X(i, j).imag = r4_nor(seed, kn, fn, wn) / 2.0;*/
+                // X(i, j).imag = 1;
             }
         }
 
@@ -416,40 +489,76 @@ int main() {
         alpha.imag = 0.0;
 
         ComplexMatrix X_conj(M, M, zero);
-        mkl_zomatcopy('R', 'C', M, M, alpha, X.GetMatrix(), M, X_conj.GetMatrix(), M);
+        mkl_zomatcopy('R', 'C', M, M, alpha, X.GetMatrix(), M, X_conj.GetMatrix(), M);  // row major, conjugate transposed
 
+        ComplexMatrix G(M, M, zero);
+        
         G = X * X_conj;
 
         double trace = G.Trace();
         for (size_t i = 0; i < M; ++i) {
             for (size_t j = 0; j < M; ++j) {
                 G(i, j).real *= N / trace;
+                G(i, j).imag *= N / trace;
             }
         }
 
+        ComplexMatrix P(N * N, N * N, zero);
         for (size_t k1 = 0; k1 < M; ++k1) {
             for (size_t k2 = 0; k2 < M; ++k2) {
                 ComplexMatrix F_conj(N, N, zero);
                 ComplexMatrix F_conj_trans(N, N, zero);
+                ComplexMatrix F_conj_trans_temp(N, N, zero);
                 ComplexMatrix F_trans(N, N, zero);
 
-                mkl_zomatcopy('R', 'R', N, N, alpha, F[k2 + 1].GetMatrix(), N, F_conj.GetMatrix(), N);
-                mkl_zomatcopy('R', 'C', N, N, alpha, F[k2 + 1].GetMatrix(), N, F_conj_trans.GetMatrix(), N);
-                mkl_zomatcopy('R', 'T', N, N, alpha, (F_conj_trans * F[k1 + 1]).GetMatrix(), N, F_trans.GetMatrix(), N);
+                mkl_zomatcopy('R', 'R', N, N, alpha, F[k2 + 1].GetMatrix(), N, F_conj.GetMatrix(), N); // row major, only conjugated
+                mkl_zomatcopy('R', 'C', N, N, alpha, F[k2 + 1].GetMatrix(), N, F_conj_trans.GetMatrix(), N); // row major, conjugate transposed
+                mkl_zomatcopy('R', 'C', N, N, alpha, F[k2 + 1].GetMatrix(), N, F_conj_trans_temp.GetMatrix(), N); // row major, conjugate transposed
+                mkl_zomatcopy('R', 'T', N, N, alpha, (F_conj_trans_temp * F[k1 + 1]).GetMatrix(), N, F_trans.GetMatrix(), N); // row major, only transposed
+
+                F_conj.normalZero();
+                F_conj_trans.normalZero();
+                F_conj_trans_temp.normalZero();
+                F_trans.normalZero();
+
+                // cout of values for checking
+                //std::cout << std::endl << "F_conj: " << std::endl;
+                //F_conj.PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //std::cout << std::endl << "F_conj_trans: " << std::endl;
+                //F_conj_trans.PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //std::cout << std::endl << "F_trans: " << std::endl;
+                //F_trans.PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //
 
                 P += mul(G(k1, k2), 0.5) * (
                     2 * KronekerProduct(eye, F[k1 + 1]) * KronekerProduct(F_conj, eye) -
-                    KronekerProduct(F_trans, eye) - KronekerProduct(eye, F_conj_trans * F[k1 + 1])
+                    KronekerProduct(F_trans, eye) - KronekerProduct(eye, (F_conj_trans * F[k1 + 1]))
                     );
+
+                // cout of values for checking
+                //std::cout << std::endl << "KronekerProduct(eye, F[k1 + 1]): " << std::endl;
+                //KronekerProduct(eye, F[k1 + 1]).PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //std::cout << std::endl << "KronekerProduct(F_conj, eye): " << std::endl;
+                //KronekerProduct(F_conj, eye).PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //std::cout << std::endl << "KronekerProduct(F_trans, eye): " << std::endl;
+                //KronekerProduct(F_trans, eye).PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //std::cout << std::endl << "(F_conj_trans * F[k1 + 1]): " << std::endl;
+                //(F_conj_trans * F[k1 + 1]).PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //std::cout << std::endl << "KronekerProduct(eye, (F_conj_trans * F[k1 + 1])): " << std::endl;
+                //KronekerProduct(eye, (F_conj_trans * F[k1 + 1])).PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //std::cout << std::endl << "P: " << std::endl;
+                //P.PrintMatrix(ComplexMatrix::PrintType::BOTH); // error
+                //
             }
         }
 
-        std::cout << "Iter " << number << std::endl;
+        //std::cout << std::endl << "P: " << std::endl;
+        //P.PrintMatrix(ComplexMatrix::PrintType::BOTH); // error
 
 		char str_re[128] = "";
 		char str_im[128] = "";
-		snprintf(str_re, sizeof(str_re), "Data\\P_matrix_re_%d.txt", number);
-		snprintf(str_im, sizeof(str_im), "Data\\P_matrix_im_%d.txt", number);
+		snprintf(str_re, sizeof(str_re), "Data_test\\P_matrix_re_%d.txt", number);
+		snprintf(str_im, sizeof(str_im), "Data_test\\P_matrix_im_%d.txt", number);
 		P.SaveMatrixForMatlab(str_re, ComplexMatrix::PrintType::ONLY_REAL);
 		P.SaveMatrixForMatlab(str_im, ComplexMatrix::PrintType::ONLY_IMAGINARY);
 	}
