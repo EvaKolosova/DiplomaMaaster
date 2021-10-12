@@ -156,7 +156,13 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="L_Histogram.cpp" />
+    <ClCompile Include="LH_Histogram.cpp" />
+    <ClCompile Include="mt19937ar.cpp" />
+    <ClCompile Include="ziggurat.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="mt19937ar.h" />
+    <ClInclude Include="ziggurat.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
