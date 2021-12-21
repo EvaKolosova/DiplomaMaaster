@@ -1,27 +1,16 @@
-#define EIGEN_USE_MKL_ALL
-
 #include <iostream>
 #include <vector>
 #include <fstream>
 #include <iostream>
 #include <random>
 #include <chrono>
-#include <stdlib.h>
-#include <stdio.h>
 #include "mkl.h"
-#include "mkl_lapacke.h"
 #include "mkl_spblas.h"
 #include "mkl_trans.h"
 #include "mkl_scalapack.h"
-#include <cstdlib>
 #include "omp.h"
 #include "mt19937ar.h"
 #include "ziggurat.hpp"
-#include <Eigen/Core>
-#include <Eigen/Dense>
-#include <Eigen/Eigenvalues>
-
-using namespace Eigen;
 
 class RandomGeneratorMT19937ar {
 private:
@@ -187,6 +176,7 @@ public:
             throw "dsf";
         }
 
+        MKL_Complex16 zero; zero.real = 0, zero.imag = 0;
         //#pragma omp parallel for
         for (size_t i = 0; i < rows; ++i) {
             for (size_t j = 0; j < cols; ++j) {
@@ -214,22 +204,6 @@ public:
         }
 
         return result;
-    }
-
-    ComplexMatrix& operator-=(const ComplexMatrix& rhs) {
-        if (rows != rhs.rows || cols != rhs.cols) {
-            throw "dsf";
-        }
-
-        //#pragma omp parallel for
-        for (size_t i = 0; i < rows; ++i) {
-            for (size_t j = 0; j < cols; ++j) {
-                this->operator()(i, j).real -= rhs(i, j).real;
-                this->operator()(i, j).imag -= rhs(i, j).imag;
-            }
-        }
-
-        return *this;
     }
 
     friend ComplexMatrix operator*(const ComplexMatrix& lhs, const ComplexMatrix& rhs) {
@@ -339,14 +313,6 @@ public:
         return matrix;
     }
 
-    size_t GetRows() const {
-        return rows;
-    }
-
-    size_t GetCols() const {
-        return cols;
-    }
-
     void PrintMatrix(PrintType printType) const {
         for (size_t i = 0; i < this->rows; ++i) {
             for (size_t j = 0; j < this->cols; ++j) {
@@ -423,13 +389,9 @@ public:
     }
 };
 
-bool complex_comparator(const MKL_Complex16& lhs, const MKL_Complex16& rhs) {
-    return lhs.real == rhs.real ? lhs.imag < rhs.imag : lhs.real < rhs.real;
-}
-
 constexpr size_t N = 4;
 constexpr size_t M = N * N - 1;
-constexpr size_t NUM_IMPL = 1; // 1'000'000;
+constexpr size_t NUMBER_OF_IMPLEMENTATIONS = 500; // 1'000'000;
 
 MKL_Complex16 mul(MKL_Complex16 complex, double value) {
     MKL_Complex16 result;
@@ -445,7 +407,7 @@ int main() {
     auto t1 = std::chrono::high_resolution_clock::now();
 
     MKL_Complex16 zero; zero.real = 0, zero.imag = 0;
-    double alpha_H = 1;
+    double alpha_H = 1.0;
 
     std::vector<ComplexMatrix> F(N * N, ComplexMatrix(N, N, zero));
 
@@ -480,23 +442,12 @@ int main() {
         }
     }
 
-    // ziggurat method
+    // ziggurat
     //uint32_t kn[128];
     //float fn[128], wn[128];
     //r4_nor_setup(kn, fn, wn);
 
-    size_t number = 0;
-    int attempt_num = 0;
-    std::cout << "Please enter the number of the attempt to calculate the data( >0 ): ";
-
-    while (!(std::cin >> attempt_num)) {
-        std::cout << "Wrong input value!" << std::endl;
-        std::cin.clear();
-        std::cin.ignore(40, '\n');
-        std::cin >> attempt_num;
-    }
-
-    for (number = ((attempt_num - 1) * NUM_IMPL); number < (attempt_num * NUM_IMPL); ++number) {
+    for (size_t number = 0; number < NUMBER_OF_IMPLEMENTATIONS; ++number) {
         ComplexMatrix X(M, M, zero);
         size_t seed = number;
 
@@ -515,7 +466,7 @@ int main() {
         gen_y.seed(seed);
         std::normal_distribution<double> distribution_y{ 0.0, 1.0 };
 
-        seed = NUM_IMPL + number;
+        seed = NUMBER_OF_IMPLEMENTATIONS + number;
 
         /*RandomGeneratorMT19937ar gen_z(0, 1, seed);*/
 
@@ -530,9 +481,7 @@ int main() {
 
                 /*X(i, j).imag = gen_z.Generate() / 2.0;*/
                 /*X(i, j).imag = r4_nor(seed, kn, fn, wn) / 2.0;*/
-
-                //X(i, j).imag = 1;
-                //X(i, j).real = 1; // for testing in matlab with same values!!!
+                // X(i, j).imag = 1;
             }
         }
 
@@ -555,7 +504,7 @@ int main() {
             }
         }
 
-        // Генерация Y - матрицы для  Гамильтоновой части - унитарной матрицы с нулевым следом
+        // Р“РµРЅРµСЂР°С†РёСЏ Y - РјР°С‚СЂРёС†С‹ РґР»СЏ  Р“Р°РјРёР»СЊС‚РѕРЅРѕРІРѕР№ С‡Р°СЃС‚Рё - СѓРЅРёС‚Р°СЂРЅРѕР№ РјР°С‚СЂРёС†С‹ СЃ РЅСѓР»РµРІС‹Рј СЃР»РµРґРѕРј
         ComplexMatrix Y(N, N, zero);
 
         seed = NUMBER_OF_IMPLEMENTATIONS * 2 + number;
@@ -575,7 +524,7 @@ int main() {
             }
         }
 
-        // Генерация матриц Гамильтониана - H
+        // Р“РµРЅРµСЂР°С†РёСЏ РјР°С‚СЂРёС† Р“Р°РјРёР»СЊС‚РѕРЅРёР°РЅР° - H
         ComplexMatrix Y_conj(N, N, zero);
         mkl_zomatcopy('R', 'C', N, N, alpha, Y.GetMatrix(), N, Y_conj.GetMatrix(), N);  // row major, conjugate transposed
 
@@ -586,8 +535,8 @@ int main() {
         H_temp = H * H;
 
         double trace_H_temp = H_temp.Trace();
-        for (size_t i = 0; i < N; ++i) {
-            for (size_t j = 0; j < N; ++j) {
+        for (size_t i = 0; i < M; ++i) {
+            for (size_t j = 0; j < M; ++j) {
                 H(i, j).real *= 1 / std::sqrt(trace_H_temp);
                 H(i, j).imag *= 1 / std::sqrt(trace_H_temp);
             }
@@ -611,54 +560,53 @@ int main() {
                 F_conj_trans_temp.normalZero();
                 F_trans.normalZero();
 
+                // cout of values for checking
+                //std::cout << std::endl << "F_conj: " << std::endl;
+                //F_conj.PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //std::cout << std::endl << "F_conj_trans: " << std::endl;
+                //F_conj_trans.PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //std::cout << std::endl << "F_trans: " << std::endl;
+                //F_trans.PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //
+
                 P += mul(G(k1, k2), 0.5) * (
                     2 * KronekerProduct(eye, F[k1 + 1]) * KronekerProduct(F_conj, eye) -
                     KronekerProduct(F_trans, eye) - KronekerProduct(eye, (F_conj_trans * F[k1 + 1]))
                     );
+
+                // cout of values for checking
+                //std::cout << std::endl << "KronekerProduct(eye, F[k1 + 1]): " << std::endl;
+                //KronekerProduct(eye, F[k1 + 1]).PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //std::cout << std::endl << "KronekerProduct(F_conj, eye): " << std::endl;
+                //KronekerProduct(F_conj, eye).PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //std::cout << std::endl << "KronekerProduct(F_trans, eye): " << std::endl;
+                //KronekerProduct(F_trans, eye).PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //std::cout << std::endl << "(F_conj_trans * F[k1 + 1]): " << std::endl;
+                //(F_conj_trans * F[k1 + 1]).PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //std::cout << std::endl << "KronekerProduct(eye, (F_conj_trans * F[k1 + 1])): " << std::endl;
+                //KronekerProduct(eye, (F_conj_trans * F[k1 + 1])).PrintMatrix(ComplexMatrix::PrintType::BOTH);
+                //std::cout << std::endl << "P: " << std::endl;
+                //P.PrintMatrix(ComplexMatrix::PrintType::BOTH); // error
+                //
             }
         }
 
-        /*char str_re[128] = "";
-        char str_im[128] = "";
-        snprintf(str_re, sizeof(str_re), "Data_test\\P_matrix_re_%d.txt", number);
-        snprintf(str_im, sizeof(str_im), "Data_test\\P_matrix_im_%d.txt", number);
-        P.SaveMatrixForMatlab(str_re, ComplexMatrix::PrintType::ONLY_REAL);
-        P.SaveMatrixForMatlab(str_im, ComplexMatrix::PrintType::ONLY_IMAGINARY);*/
-
-        ComplexMatrix H_trans(N, N, zero); 
+        ComplexMatrix H_trans(N, N, zero);
         mkl_zomatcopy('R', 'T', N, N, alpha, H.GetMatrix(), N, H_trans.GetMatrix(), N); // row major, only transposed
 
-        MKL_Complex16 imag; imag.real = 0, imag.imag = 1;
+        // P = P - 1.0 * alpha * Im * (kron(H, eye(N)) - kron(eye(N), transpose(H))); // Р“Р°РјРёР»СЊС‚РѕРЅРѕРІР° С‡Р°СЃС‚СЊ
+        P = P - 1.0 * alpha_H * std::sqrt(-1) * (KronekerProduct(H, eye) - KronekerProduct(eye, H_trans));
 
-        P -= mul(imag, 1.0 * alpha_H) * (KronekerProduct(H, eye) - KronekerProduct(eye, H_trans)); // Гамильтонова часть
+        //std::cout << std::endl << "P: " << std::endl;
+        //P.PrintMatrix(ComplexMatrix::PrintType::BOTH); // error
 
-        char str_re_H[128] = "";
-        char str_im_H[128] = "";
-        snprintf(str_re_H, sizeof(str_re_H), "Data_test\\Attempt_num_%d\\P_H_matrix_re_%d.txt", attempt_num, number);
-        snprintf(str_im_H, sizeof(str_im_H), "Data_test\\Attempt_num_%d\\P_H_matrix_im_%d.txt", attempt_num, number);
-        P.SaveMatrixForMatlab(str_re_H, ComplexMatrix::PrintType::ONLY_REAL);
-        P.SaveMatrixForMatlab(str_im_H, ComplexMatrix::PrintType::ONLY_IMAGINARY);
-
-        // eigenvalues of P
-        ComplexMatrix P_copy(N * N, N * N, zero);
-        P_copy = P;
-        MKL_INT ldvl = N * N;
-        ComplexMatrix w(N, N, zero), vl(N * N, N * N, zero);
-        
-        MKL_INT info = LAPACKE_zgeev(LAPACK_ROW_MAJOR, 'V', 'N', N * N, P_copy.GetMatrix(), N * N, w.GetMatrix(), vl.GetMatrix(), ldvl, 0, ldvl);
-
-        if (info > 0) {
-            printf("The algorithm failed to compute eigenvalues.\n");
-            return EXIT_FAILURE;
-        }
-       
-        std::cout << std::endl;
-        w.PrintMatrix(ComplexMatrix::PrintType::BOTH); // Print eigenvalues
-        std::cout << std::endl;
-        vl.PrintMatrix(ComplexMatrix::PrintType::BOTH); // Print eigenvectors
+        char str_re[128] = "";
+        char str_im[128] = "";
+        snprintf(str_re, sizeof(str_re), "Data_test\\P_H_matrix_re_%d.txt", number);
+        snprintf(str_im, sizeof(str_im), "Data_test\\P_H_matrix_im_%d.txt", number);
+        P.SaveMatrixForMatlab(str_re, ComplexMatrix::PrintType::ONLY_REAL);
+        P.SaveMatrixForMatlab(str_im, ComplexMatrix::PrintType::ONLY_IMAGINARY);
     }
-
-
     auto t2 = std::chrono::high_resolution_clock::now();
     auto ms_int = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1);
     std::cout << ms_int.count() << "sec.\n";
